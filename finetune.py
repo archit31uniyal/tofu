@@ -41,6 +41,8 @@ def main(cfg):
     if os.environ.get('LOCAL_RANK') is not None:
         local_rank = int(os.environ.get('LOCAL_RANK', '0'))
         device_map = {'': local_rank}
+    
+    os.environ["HYDRA_FULL_ERROR"] = "1"
 
     os.environ["WANDB_DISABLED"] = "true"
     model_cfg = get_model_identifiers_from_yaml(cfg.model_family)
@@ -59,6 +61,7 @@ def main(cfg):
     max_length = 500
     torch_format_dataset = TextDatasetQA(cfg.data_path, tokenizer=tokenizer, model_family = cfg.model_family, max_length=max_length, split=cfg.split)
 
+    print("Size of dataset: ", len(torch_format_dataset))
     batch_size = cfg.batch_size
     gradient_accumulation_steps = cfg.gradient_accumulation_steps
     # --nproc_per_node gives the number of GPUs per = num_devices. take it from torchrun/os.environ
@@ -83,8 +86,8 @@ def main(cfg):
             warmup_steps=max(1, max_steps//10),
             max_steps=max_steps,
             learning_rate=cfg.lr,
-            bf16=True,
-            bf16_full_eval=True,
+            fp16= True,
+            fp16_full_eval=True,
             logging_steps=max(1,max_steps//20),
             logging_dir=f'{cfg.save_dir}/logs',
             output_dir=cfg.save_dir,
@@ -93,7 +96,7 @@ def main(cfg):
             save_only_model=True,
             ddp_find_unused_parameters= False,
             evaluation_strategy="no",
-            deepspeed='config/ds_config.json',
+            deepspeed='llm_privacy/tofu/config/ds_config.json',
             weight_decay = cfg.weight_decay
         )
 

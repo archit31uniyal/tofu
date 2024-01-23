@@ -5,9 +5,9 @@ LoRA:
   alpha: 32
   dropout: 0.05
 
-data_path: locuslab/TOFU
+data_path: /p/compressionleakage/llm_privacy/tofu/dataset
 split: full
-batch_size: 16
+batch_size: 4
 gradient_accumulation_steps: 1
 num_epochs: 5
 lr: 1e-5

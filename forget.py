@@ -84,15 +84,15 @@ def main(cfg):
             warmup_steps=max(1, max_steps//10),
             max_steps=max_steps,
             learning_rate=cfg.lr,
-            bf16=True,
-            bf16_full_eval=True,
+            fp16=True,
+            fp16_full_eval=True,
             logging_steps=max(1,max_steps//20),
             logging_dir=f'{cfg.save_dir}/logs',
             output_dir=cfg.save_dir,
             optim="paged_adamw_32bit",
             save_steps=steps_per_epoch,
             ddp_find_unused_parameters= False,
-            deepspeed='config/ds_config.json',
+            deepspeed='llm_privacy/tofu/config/ds_config.json',
             weight_decay = cfg.weight_decay,
             evaluation_strategy = "steps",
             eval_steps = steps_per_epoch,
@@ -112,7 +112,6 @@ def main(cfg):
             break
 
     oracle_model = None
-
     if path_found:
         print("Loading from checkpoint")
         model = AutoModelForCausalLM.from_pretrained(cfg.model_path, use_flash_attention_2=model_cfg["flash_attention2"]=="true", torch_dtype=torch.bfloat16, trust_remote_code = True)
@@ -121,7 +120,7 @@ def main(cfg):
 
     else:
         print("Loading after merge and unload")
-        model = AutoModelForCausalLM.from_pretrained(model_id, use_flash_attention_2=model_cfg["flash_attention2"]=="true", torch_dtype=torch.bfloat16, device_map=device_map)
+        model = AutoModelForCausalLM.from_pretrained(model_id, use_flash_attention_2=model_cfg["flash_attention2"]=="true", torch_dtype=torch.bfloat16, trust_remote_code = True)
         #now use the checkpoint to add the LoRA modules
         model = PeftModel.from_pretrained(model, model_id = cfg.model_path)
         #save this as a standard model so that we can again do PEFT style finetuneing from scratch
