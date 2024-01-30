@@ -13,6 +13,7 @@ from utils import merge_dicts, interleave_eval_result_dict, get_forget_quality, 
 import numpy as np
 from scipy.stats import ks_2samp, hmean
 import csv 
+from tqdm import tqdm
 
 def printll(name, inp):
     #print list with 4 decimal for each item
@@ -186,6 +187,43 @@ class CustomTrainerForgetting(Trainer):
             loss = outputs.loss
         return (loss, logits, labels)
 
+    def eval_perplexity(self, model, dataloader):
+        # Set the model to evaluation mode
+        total_loss_forget, total_tokens_forget = 0.0, 0
+        total_loss_retain, total_tokens_retain = 0.0, 0
+
+        with torch.no_grad():
+            for batch in tqdm(dataloader, desc="Evaluating perplexity"):
+                forget, retain = batch
+                forget_inp, forget_lab, forget_att = forget[0], forget[1], forget[2]
+                retain_inp, retain_lab, retain_att = retain[0], retain[1], retain[2]
+                # forget = (forget_inp, forget_lab, forget_att)
+                # retain = (retain_inp, retain_lab, retain_att)
+                # Move tensors to the device
+                forget_batch = {'input_ids': forget_inp, 'labels': forget_lab, 'attention_mask': forget_att}
+                retain_batch = {'input_ids': retain_inp, 'labels': retain_lab, 'attention_mask': retain_att}
+
+                # Forward pass
+                # logits = self.model(input_ids, attention_mask)
+
+                print("\nGenerating logits\n")
+                forget_outputs = model(input_ids = forget_batch['input_ids'], labels = forget_batch['labels'], attention_mask = forget_batch['attention_mask'])
+                retain_outputs = model(input_ids = retain_batch['input_ids'], labels = retain_batch['labels'], attention_mask = retain_batch['attention_mask'])
+
+                print("\nCalculating loss\n")
+                loss_forget = get_batch_loss(forget_outputs.logits, forget_batch)
+                loss_retain = get_batch_loss(retain_outputs.logits, retain_batch)
+                
+                total_loss_forget += loss_forget.item()
+                total_tokens_forget += torch.sum(forget_batch['attention_mask']).item()
+
+                total_loss_retain += loss_retain.item()
+                total_tokens_retain += torch.sum(retain_batch['attention_mask']).item()
+
+        perplexity_forget = torch.exp(total_loss_forget / total_tokens_forget)
+        perplexity_retain = torch.exp(total_loss_retain / total_tokens_retain)
+        return (total_loss_forget / total_tokens_forget).item(), perplexity_forget.item(), (total_loss_retain / total_tokens_retain).item(), perplexity_retain.item()
+
     def evaluate(
         self,
         eval_dataset = None,
@@ -226,6 +264,8 @@ class CustomTrainerForgetting(Trainer):
 
         curr_save_dir = os.path.join(eval_cfg.save_dir, f"checkpoint-{curr_step}")
         Path(curr_save_dir).mkdir(parents=True, exist_ok=True)
+        
+        
         forget_rate = eval_cfg.split.split('_')[0]
         with torch.no_grad():
             for i, (folder, split, question_key, answer_key, eval_task, base_answer_key, perturbed_answer_key) in enumerate(zip(eval_cfg.data_path, eval_cfg.split_list, eval_cfg.question_key, eval_cfg.answer_key, eval_cfg.eval_task, eval_cfg.base_answer_key, eval_cfg.perturbed_answer_key)):
@@ -277,25 +317,36 @@ class CustomTrainerForgetting(Trainer):
                             for i in range(world_size):
                                 filename = os.path.join(curr_save_dir, f"{eval_task}_{i}.json")
                                 os.remove(filename)
-                                
-            if self.accelerator.is_local_main_process:
-                aggregated_eval_logs = interleave_eval_result_dict(aggregated_eval_logs, forget_rate, large_bsz=eval_cfg.batch_size, num_processes=world_size)
-                aggregated_eval_log_filename = os.path.join(curr_save_dir, "eval_log_aggregated.json")
+            
+            if not eval_cfg.model_family == "gpt-neo":                  
+                if self.accelerator.is_local_main_process:
+                    aggregated_eval_logs = interleave_eval_result_dict(aggregated_eval_logs, forget_rate, large_bsz=eval_cfg.batch_size, num_processes=world_size)
+                    aggregated_eval_log_filename = os.path.join(curr_save_dir, "eval_log_aggregated.json")
 
-                with open(aggregated_eval_log_filename, 'w') as f:
-                    json.dump(aggregated_eval_logs, f, indent=4)
+                    with open(aggregated_eval_log_filename, 'w') as f:
+                        json.dump(aggregated_eval_logs, f, indent=4)
 
-                model_utility = get_model_utility(aggregated_eval_logs)
-                retain_result = json.load(open(eval_cfg.retain_result, 'r'))
-                forget_quality = get_forget_quality(aggregated_eval_logs, retain_result)
-                aaggregate_stat = {**model_utility, **forget_quality}
+                    model_utility = get_model_utility(aggregated_eval_logs)
+                    retain_result = json.load(open(eval_cfg.retain_result, 'r'))
+                    forget_quality = get_forget_quality(aggregated_eval_logs, retain_result)
+                    aaggregate_stat = {**model_utility, **forget_quality}
 
-                # save aaggregate_stat as csv
-                with open(os.path.join(curr_save_dir, "aggregate_stat.csv"), 'w') as csvfile:
-                    field_names = list(aaggregate_stat.keys())
-                    writer = csv.DictWriter(csvfile, fieldnames=field_names)
-                    writer.writeheader()
-                    writer.writerow(aaggregate_stat)
+                    # save aaggregate_stat as csv
+                    with open(os.path.join(curr_save_dir, "aggregate_stat.csv"), 'w') as csvfile:
+                        field_names = list(aaggregate_stat.keys())
+                        writer = csv.DictWriter(csvfile, fieldnames=field_names)
+                        writer.writeheader()
+                        writer.writerow(aaggregate_stat)
+        # else:
+        #     if self.accelerator.is_local_main_process:
+        #         with torch.no_grad():
+        #             eval_dataloader, _, _ = get_dataloader(eval_cfg, eval_cfg.eval_task, self.tokenizer, eval_cfg.forgot_dir, eval_cfg.split, eval_cfg.question_key, eval_cfg.answer_key, eval_cfg.base_answer_key, eval_cfg.perturbed_answer_key)
+        #             eval_dataloader = self.accelerator.prepare(eval_dataloader)
+        #             loss_forget, perplexity_forget, loss_retain, perplexity_retain = self.eval_perplexity(model, eval_dataloader)
+        #             with open(os.path.join(curr_save_dir, "eval_log_aggregated.json"), 'w+') as f:
+        #                 json.dump({'Forget Loss': loss_forget, 'Forget Perplexity': perplexity_forget, 'Retain Loss': loss_retain, 'Retain Perplexity': perplexity_retain}, f, indent=4)
+        #                 f.write('\n')
+                
 
 def custom_data_collator_forget(samples):
     forget_samples, retain_samples = [sample[0] for sample in samples], [sample[1] for sample in samples]
@@ -307,7 +358,6 @@ def custom_data_collator_forget(samples):
         attention_mask = [s[2] for s in data]
         rets.append((torch.stack(input_ids), torch.stack(labels), torch.stack(attention_mask)))
     return rets
-
 
 
 def compute_metrics(pred):

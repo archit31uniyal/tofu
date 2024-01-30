@@ -1,5 +1,5 @@
 from tqdm import tqdm
-from data_module import TextDatasetQA, custom_data_collator, get_batch_loss
+from data_module import TextDatasetQA, custom_data_collator, get_batch_loss, TextGenerationDatasetFromJSON, custom_data_collator_forget
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 import os, hydra
@@ -64,52 +64,79 @@ def eval_perturbation_ratio(eval_dataloader, perturb_dataloader, model):
 
 def get_dataloader(cfg, eval_task, tokenizer, folder, split, question_key, answer_key, base_answer_key, perturbed_answer_key):
 
-    torch_format_dataset = TextDatasetQA( 
-            folder, 
+    if not cfg.model_family == 'gpt-neo':
+        torch_format_dataset = TextDatasetQA( 
+                folder, 
+                tokenizer=tokenizer, 
+                model_family=cfg.model_family, 
+                max_length=cfg.generation.max_length, 
+                split=split, 
+                question_key=question_key, 
+                answer_key=answer_key
+            ) 
+        base_torch_format_dataset = TextDatasetQA(
+            folder,
             tokenizer=tokenizer, 
             model_family=cfg.model_family, 
             max_length=cfg.generation.max_length, 
             split=split, 
             question_key=question_key, 
-            answer_key=answer_key
-        ) 
-    base_torch_format_dataset = TextDatasetQA(
-        folder,
-        tokenizer=tokenizer, 
-        model_family=cfg.model_family, 
-        max_length=cfg.generation.max_length, 
-        split=split, 
-        question_key=question_key, 
-        answer_key=base_answer_key
-    )
+            answer_key=base_answer_key
+        )
 
-    perturb_torch_format_dataset = TextDatasetQA(
-        folder,
-        tokenizer=tokenizer, 
-        model_family=cfg.model_family, 
-        max_length=cfg.generation.max_length, 
-        split=split, 
-        question_key=question_key, 
-        answer_key=perturbed_answer_key
-    )
-
+        perturb_torch_format_dataset = TextDatasetQA(
+            folder,
+            tokenizer=tokenizer, 
+            model_family=cfg.model_family, 
+            max_length=cfg.generation.max_length, 
+            split=split, 
+            question_key=question_key, 
+            answer_key=perturbed_answer_key
+        )
+    else:
+        # torch_format_dataset = TextGenerationDatasetFromJSON(
+        #     folder,
+        #     tokenizer=tokenizer,
+        #     split=split,
+        #     max_length=cfg.generation.max_length,
+        #     device='cuda' if torch.cuda.is_available() else 'cpu',
+        # )
+        torch_format_dataset = TextDatasetQA( 
+                folder, 
+                tokenizer=tokenizer, 
+                model_family=cfg.model_family, 
+                max_length=cfg.generation.max_length, 
+                split=split, 
+                question_key=question_key, 
+                answer_key=answer_key
+            )
+    # print(dir(torch_format_dataset))
     if cfg.ds_size:
-        torch_format_dataset.data = torch_format_dataset.data.select(range(min(cfg.ds_size, len(torch_format_dataset.data))))
-        base_torch_format_dataset.data = base_torch_format_dataset.data.select(range(min(cfg.ds_size, len(base_torch_format_dataset.data))))
-        perturb_torch_format_dataset.data = perturb_torch_format_dataset.data.select(range(min(cfg.ds_size, len(perturb_torch_format_dataset.data))))
+        if not cfg.model_family == 'gpt-neo':
+            torch_format_dataset.data = torch_format_dataset.data.select(range(min(cfg.ds_size, len(torch_format_dataset.data))))
+            base_torch_format_dataset.data = base_torch_format_dataset.data.select(range(min(cfg.ds_size, len(base_torch_format_dataset.data))))
+            perturb_torch_format_dataset.data = perturb_torch_format_dataset.data.select(range(min(cfg.ds_size, len(perturb_torch_format_dataset.data))))
+        else:
+            # print(min(cfg.ds_size, len(torch_format_dataset)))
+            indices = range(min(cfg.ds_size, len(torch_format_dataset)))
+            torch_format_dataset = torch.utils.data.Subset(torch_format_dataset, indices)
 
 
     eval_dataloader = torch.utils.data.DataLoader(
         torch_format_dataset, batch_size=cfg.batch_size, collate_fn=custom_data_collator
     )
-    base_eval_dataloader = torch.utils.data.DataLoader(
-        base_torch_format_dataset, batch_size=cfg.batch_size//4, collate_fn=custom_data_collator
-    )
-    perturb_dataloader = torch.utils.data.DataLoader(
-        perturb_torch_format_dataset, batch_size=cfg.batch_size//4, collate_fn=custom_data_collator
-    )
+    if not cfg.model_family == 'gpt-neo':
+        base_eval_dataloader = torch.utils.data.DataLoader(
+            base_torch_format_dataset, batch_size=cfg.batch_size//4, collate_fn=custom_data_collator
+        )
+        perturb_dataloader = torch.utils.data.DataLoader(
+            perturb_torch_format_dataset, batch_size=cfg.batch_size//4, collate_fn=custom_data_collator
+        )
+    
+        return eval_dataloader, base_eval_dataloader, perturb_dataloader
+    else:
+        return eval_dataloader, None, None
 
-    return eval_dataloader, base_eval_dataloader, perturb_dataloader
 
 def get_all_evals(cfg, model, tokenizer, eval_task, eval_dataloader, base_eval_dataloader, perturb_dataloader):
     eval_logs = {}
@@ -130,10 +157,13 @@ def get_all_evals(cfg, model, tokenizer, eval_task, eval_dataloader, base_eval_d
             gen_outputs.extend(gen_output)
             ground_truths.extend(gt)
             input_strings.extend(input_string)
-            
-        gt_loss = get_batch_loss(outputs.logits, batch['labels'])
-        num_token_gt = (batch['labels']!=-100).sum(-1)
 
+        gt_loss = get_batch_loss(outputs.logits, batch['labels'])
+        for k, v in batch.items():
+            batch[k] = v.to('cpu')
+        
+        gt_loss = gt_loss.to('cpu')
+        num_token_gt = (batch['labels']!=-100).sum(-1)
         # print(gt_loss.shape, num_token_gt.shape)
         eval_logs['avg_gt_loss'] = eval_logs.get('avg_gt_loss', []) + (gt_loss/num_token_gt).cpu().numpy().tolist()
         eval_logs['gt_loss'] = eval_logs.get('gt_loss', []) + gt_loss.tolist()
@@ -141,7 +171,7 @@ def get_all_evals(cfg, model, tokenizer, eval_task, eval_dataloader, base_eval_d
 
 
     eval_logs.update(eval_rouge_recall(gen_outputs, ground_truths))
-    eval_logs.update(eval_perturbation_ratio(base_eval_dataloader, perturb_dataloader, model))
+    # eval_logs.update(eval_perturbation_ratio(base_eval_dataloader, perturb_dataloader, model))
 
     eval_logs['generated_text'] = list(zip(input_strings, gen_outputs,ground_truths))
     return eval_logs
@@ -231,8 +261,19 @@ def run_generation(cfg, batch, model, tokenizer):
     input_ids = batch["input_ids"]
     input_strings = tokenizer.batch_decode(input_ids, skip_special_tokens=True)
     split_symbol = " [/INST]" if cfg.model_family == 'llama2-7b' else 'Answer: '
-    ground_truth = [s.split(split_symbol)[1] for s in input_strings]
-    input_strings = [s.split(split_symbol)[0] for s in input_strings]
+    ground_truth, input_strings = [], []
+    for s in input_strings:
+        split_string = s.split(split_symbol)
+        if len(split_string) == 1:
+            print(split_string)
+            continue
+        ground_truth.append(split_string[1])
+        input_strings.append(split_string[0])
+
+    # ground_truth = [s.split(split_symbol)[1] for s in input_strings]
+    # input_strings = [s.split(split_symbol)[0] for s in input_strings]
+    # ground_truth = input_strings
+    # input_strings = [s.split(split_symbol)[0] for s in input_strings]
     #add ["/INST "] to the end of each string
     if cfg.model_family == 'llama2-7b':
         input_strings = [s + split_symbol for s in input_strings]
@@ -240,7 +281,7 @@ def run_generation(cfg, batch, model, tokenizer):
     #we only want to retain the input before the [/INST] token. split each string to only retain the content before the [/INST] token
     # ground_truth = [s.split("[/INST] ")[1] for s in input_strings]
     # input_strings = [s.split("[/INST] ")[0] for s in input_strings]
-    # #add ["/INST "] to the end of each string
+    #add ["/INST "] to the end of each string
     # input_strings = [s + "[/INST] " for s in input_strings]
     
     #now tokenize the strings with left padding

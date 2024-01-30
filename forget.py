@@ -1,4 +1,4 @@
-from data_module import TextForgetDatasetQA, TextForgetDatasetDPOQA
+from data_module import TextForgetDatasetQA, TextForgetDatasetDPOQA, TextGenerationDatasetFromJSON
 from dataloader import CustomTrainerForgetting, custom_data_collator_forget
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -45,14 +45,15 @@ def main(cfg):
         device_map = {'': local_rank}
 
     os.environ["WANDB_DISABLED"] = "true"
+    os.environ["HYDRA_FULL_ERROR"] = '1'
     model_cfg = get_model_identifiers_from_yaml(cfg.model_family)
     model_id = model_cfg["hf_key"]
     if cfg.model_path is None:
-        cfg.model_path = model_cfg["ft_model_path"]
-
+        cfg.model_path = model_cfg["hf_key"]
 
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     tokenizer.pad_token = tokenizer.eos_token
+    
 
     print("######################")
     print("Saving to: ", cfg.save_dir)
@@ -68,7 +69,10 @@ def main(cfg):
     if cfg.forget_loss == "dpo":
         torch_format_dataset = TextForgetDatasetDPOQA(cfg.data_path, tokenizer=tokenizer, model_family = cfg.model_family, max_length=max_length, split=cfg.split)
     else:
-        torch_format_dataset = TextForgetDatasetQA(cfg.data_path, tokenizer=tokenizer, model_family = cfg.model_family, max_length=max_length, split=cfg.split, loss_type=cfg.forget_loss)
+        if not cfg.model_family == "gpt-neo":
+            torch_format_dataset = TextForgetDatasetQA(cfg.data_path, tokenizer=tokenizer, model_family = cfg.model_family, max_length=max_length, split=cfg.split, loss_type=cfg.forget_loss)
+        else:
+            torch_format_dataset = TextGenerationDatasetFromJSON(cfg.data_path, tokenizer=tokenizer, model_family = cfg.model_family, max_length=max_length, split=cfg.split, loss_type=cfg.forget_loss)
     
     batch_size = cfg.batch_size
     gradient_accumulation_steps = cfg.gradient_accumulation_steps
@@ -92,7 +96,7 @@ def main(cfg):
             optim="paged_adamw_32bit",
             save_steps=steps_per_epoch,
             ddp_find_unused_parameters= False,
-            deepspeed='llm_privacy/tofu/config/ds_config.json',
+            deepspeed='tofu/config/ds_config.json',
             weight_decay = cfg.weight_decay,
             evaluation_strategy = "steps",
             eval_steps = steps_per_epoch,
@@ -102,14 +106,17 @@ def main(cfg):
     #if there is a pytorch*.bin file in the model path, then load that. use regex there can be anythign in between pytorch and .bin
     import re
     path_found = False
-    for file in os.listdir(cfg.model_path):
-        if re.search("pytorch.*\.bin", file):
-            path_found = True
-            break
-        
-        if re.search("model-*\.safetensors", file):
-            path_found = True
-            break
+    if cfg.model_path == model_id:
+        path_found = True
+    else:
+        for file in os.listdir(cfg.model_path):
+            if re.search("pytorch.*\.bin", file):
+                path_found = True
+                break
+            
+            if re.search("model-*\.safetensors", file):
+                path_found = True
+                break
 
     oracle_model = None
     if path_found:
@@ -173,7 +180,6 @@ def main(cfg):
                 #delete the directory
                 import shutil
                 shutil.rmtree(global_step_dir)
-
 
 
 if __name__ == "__main__":

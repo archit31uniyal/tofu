@@ -7,7 +7,7 @@ import evaluate
 import json
 from pathlib import Path
 from rouge_score import rouge_scorer
-from ..utils import get_model_identifiers_from_yaml
+from utils import get_model_identifiers_from_yaml
 import torch.nn as nn
 
 def eval_perturbation_ratio(eval_dataloader, perturb_dataloader, model):
@@ -146,7 +146,7 @@ def get_all_evals(cfg, model, tokenizer, eval_task, eval_dataloader, base_eval_d
     eval_logs['generated_text'] = list(zip(input_strings, gen_outputs,ground_truths))
     return eval_logs
 
-@hydra.main(version_base=None, config_path="config", config_name="eval_everything")
+@hydra.main(version_base=None, config_path="../config", config_name="eval_everything")
 def main(cfg):
     assert len(cfg.data_path)==len(cfg.split_list)==len(cfg.eval_task)==len(cfg.question_key)==len(cfg.answer_key)==len(cfg.base_answer_key)==len(cfg.perturbed_answer_key), "data_path, split, eval_task, question_key, and answer_key must be the same length"
     Path(cfg.save_dir).mkdir(parents=True, exist_ok=True)
@@ -156,6 +156,7 @@ def main(cfg):
         device_map = {'': local_rank}
 
     os.environ["WANDB_DISABLED"] = "true"
+    os.environ['HYDRA_FULL_ERROR'] = "1"
     model_cfg = get_model_identifiers_from_yaml(cfg.model_family)
     model_id = model_cfg["hf_key"]
     tokenizer = AutoTokenizer.from_pretrained(model_id)

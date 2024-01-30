@@ -32,10 +32,10 @@ pythia-1.4:
   gradient_checkpointing: "false"
 gpt-neo:
   hf_key: "EleutherAI/gpt-neo-1.3B"
-  question_start_tag: "Question: "
+  question_start_tag: "Prompt: "
   question_end_tag: "\n"
   answer_tag: "Answer: "
   flash_attention2: "false"
   gradient_checkpointing: "false"
-  ft_model_path: "paper_models/final_ft_noLORA_5_epochs_inst_lr1e-05_gpt-neo_full/checkpoint-625"
+  forgot_model_path: "paper_models/4GPU_grad_diff_1e-05_forget_new/checkpoint-93"
   

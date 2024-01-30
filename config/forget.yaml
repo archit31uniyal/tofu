@@ -1,4 +1,4 @@
-model_family: llama2-7b
+model_family: gpt-neo
 model_path: null
 LoRA:
   r: 0
@@ -6,34 +6,34 @@ LoRA:
   dropout: 0.05
 
 lr: 1e-5
-split: forget10
-data_path: /p/compressionleakage/llm_privacy/tofu/dataset
+split: forget
+# data_path: /p/compressionleakage/llm_privacy/tofu/dataset
+data_path: cache_100_200_1000_512/train
 batch_size: 4
 gradient_accumulation_steps: 4
 num_epochs: 10
 forget_loss: grad_diff
-save_dir: ${model_path}/../4GPU_${forget_loss}_${lr}_${split}_new
+save_dir: paper_models/4GPU_${forget_loss}_${lr}_${split}_new_2
 overwrite_dir: true
 weight_decay: 0.01
 
 eval:
-  retain_result: /p/compressionleakage/llm_privacy/tofu/data/retain90_llama_wd0.01/eval_results/ds_size300/eval_log_aggregated.json
+  retain_result: /sfs/weka/scratch/deu9yh/llm_privacy/tofu/data/retain90_llama_wd0.01/eval_results/ds_size300/eval_log_aggregated.json
   model_path: ${..model_path}
   model_family: ${..model_family}
   save_dir: ${..save_dir}
-  data_path: [/p/compressionleakage/llm_privacy/tofu/dataset, /p/compressionleakage/llm_privacy/tofu/dataset, /p/compressionleakage/llm_privacy/tofu/dataset, /p/compressionleakage/llm_privacy/tofu/dataset]
-  split: ${..split}_perturbed
+  forgot_dir: ${..data_path}
+  data_path: [/sfs/weka/scratch/deu9yh/llm_privacy/cache_100_200_1000_512/train, /sfs/weka/scratch/deu9yh/llm_privacy/cache_100_200_1000_512/train, /sfs/weka/scratch/deu9yh/llm_privacy/cache_100_200_1000_512/train, /sfs/weka/scratch/deu9yh/llm_privacy/cache_100_200_1000_512/train]
+  split: ${..split}
   split_list:
-    - retain_perturbed
-    - real_authors_perturbed
-    - world_facts_perturbed
+    - retain
     - ${split}
 
-  eval_task: [eval_log, eval_real_author_wo_options, eval_real_world_wo_options, eval_log_forget]
-  question_key: [question, question, question, question]
-  answer_key: [answer, answer, answer, answer]
-  base_answer_key: [paraphrased_answer, answer, answer, paraphrased_answer]
-  perturbed_answer_key: [perturbed_answer, perturbed_answer, perturbed_answer, perturbed_answer]
+  eval_task: [eval_retain, eval_log_forget]
+  question_key: [question, question]
+  answer_key: [answer, answer]
+  base_answer_key: [answer, paraphrased_answer]
+  perturbed_answer_key: [perturbed_answer, perturbed_answer]
 
   generation:
     max_length: 200
