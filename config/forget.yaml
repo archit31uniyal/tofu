@@ -1,4 +1,4 @@
-model_family: gpt-neo
+model_family: gpt2
 model_path: null
 LoRA:
   r: 0
@@ -6,14 +6,15 @@ LoRA:
   dropout: 0.05
 
 lr: 1e-5
-split: forget
+split: train
 # data_path: /p/compressionleakage/llm_privacy/tofu/dataset
-data_path: cache_100_200_1000_512/train
+data_path: imdbhface
+task: gen
 batch_size: 4
 gradient_accumulation_steps: 4
-num_epochs: 10
+num_epochs: 3
 forget_loss: grad_diff
-save_dir: paper_models/4GPU_${forget_loss}_${lr}_${split}_new_2
+save_dir: paper_models/4GPU_${forget_loss}_${lr}_${split}_${model_family}_unlearn_${data_path}_bf16
 overwrite_dir: true
 weight_decay: 0.01
 
@@ -23,17 +24,18 @@ eval:
   model_family: ${..model_family}
   save_dir: ${..save_dir}
   forgot_dir: ${..data_path}
-  data_path: [/sfs/weka/scratch/deu9yh/llm_privacy/cache_100_200_1000_512/train, /sfs/weka/scratch/deu9yh/llm_privacy/cache_100_200_1000_512/train, /sfs/weka/scratch/deu9yh/llm_privacy/cache_100_200_1000_512/train, /sfs/weka/scratch/deu9yh/llm_privacy/cache_100_200_1000_512/train]
+  data_path: [wikitext, bookcorpus, imdbhface]
   split: ${..split}
   split_list:
     - retain
+    - retain
     - ${split}
 
-  eval_task: [eval_retain, eval_log_forget]
-  question_key: [question, question]
-  answer_key: [answer, answer]
-  base_answer_key: [answer, paraphrased_answer]
-  perturbed_answer_key: [perturbed_answer, perturbed_answer]
+  eval_task: [eval_wikitext, eval_books, eval_log_forget]
+  question_key: [question, question, question]
+  answer_key: [answer, answer, answer]
+  base_answer_key: [answer, answer, paraphrased_answer]
+  perturbed_answer_key: [perturbed_answer, perturbed_answer, perturbed_answer]
 
   generation:
     max_length: 200

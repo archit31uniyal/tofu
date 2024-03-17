@@ -1,5 +1,5 @@
 from tqdm import tqdm
-from data_module import TextDatasetQA, custom_data_collator, get_batch_loss, TextGenerationDatasetFromJSON, custom_data_collator_forget
+from data_module import TextDatasetQA, custom_data_collator, get_batch_loss, custom_data_collator_forget, TextGenDataset
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 import os, hydra
@@ -9,6 +9,7 @@ from pathlib import Path
 from rouge_score import rouge_scorer
 from utils import get_model_identifiers_from_yaml
 import torch.nn as nn
+import numpy as np
 
 def eval_perturbation_ratio(eval_dataloader, perturb_dataloader, model):
     eval_logs = {}
@@ -62,9 +63,9 @@ def eval_perturbation_ratio(eval_dataloader, perturb_dataloader, model):
 
     return eval_logs
 
-def get_dataloader(cfg, eval_task, tokenizer, folder, split, question_key, answer_key, base_answer_key, perturbed_answer_key):
+def get_dataloader(cfg, eval_task, tokenizer, folder, split, question_key, answer_key, base_answer_key, perturbed_answer_key, task ='qa'):
 
-    if not cfg.model_family == 'gpt-neo':
+    if not cfg.model_family in ['gpt-neo', 'gpt2']:
         torch_format_dataset = TextDatasetQA( 
                 folder, 
                 tokenizer=tokenizer, 
@@ -94,29 +95,32 @@ def get_dataloader(cfg, eval_task, tokenizer, folder, split, question_key, answe
             answer_key=perturbed_answer_key
         )
     else:
-        # torch_format_dataset = TextGenerationDatasetFromJSON(
-        #     folder,
-        #     tokenizer=tokenizer,
-        #     split=split,
-        #     max_length=cfg.generation.max_length,
-        #     device='cuda' if torch.cuda.is_available() else 'cpu',
-        # )
-        torch_format_dataset = TextDatasetQA( 
+        if task == 'qa':
+            torch_format_dataset = TextDatasetQA( 
+                    folder, 
+                    tokenizer=tokenizer, 
+                    model_family=cfg.model_family, 
+                    max_length=cfg.generation.max_length, 
+                    split=split, 
+                    question_key=question_key, 
+                    answer_key=answer_key
+                )
+        else:
+            torch_format_dataset = TextGenDataset(
                 folder, 
                 tokenizer=tokenizer, 
                 model_family=cfg.model_family, 
                 max_length=cfg.generation.max_length, 
-                split=split, 
-                question_key=question_key, 
-                answer_key=answer_key
+                split=split
             )
     # print(dir(torch_format_dataset))
     if cfg.ds_size:
-        if not cfg.model_family == 'gpt-neo':
+        if not cfg.model_family in ['gpt-neo', 'gpt2']:
             torch_format_dataset.data = torch_format_dataset.data.select(range(min(cfg.ds_size, len(torch_format_dataset.data))))
             base_torch_format_dataset.data = base_torch_format_dataset.data.select(range(min(cfg.ds_size, len(base_torch_format_dataset.data))))
             perturb_torch_format_dataset.data = perturb_torch_format_dataset.data.select(range(min(cfg.ds_size, len(perturb_torch_format_dataset.data))))
         else:
+            # torch_format_dataset.data = torch_format_dataset.data.select(range(min(cfg.ds_size, len(torch_format_dataset.data))))
             # print(min(cfg.ds_size, len(torch_format_dataset)))
             indices = range(min(cfg.ds_size, len(torch_format_dataset)))
             torch_format_dataset = torch.utils.data.Subset(torch_format_dataset, indices)
@@ -125,7 +129,7 @@ def get_dataloader(cfg, eval_task, tokenizer, folder, split, question_key, answe
     eval_dataloader = torch.utils.data.DataLoader(
         torch_format_dataset, batch_size=cfg.batch_size, collate_fn=custom_data_collator
     )
-    if not cfg.model_family == 'gpt-neo':
+    if not cfg.model_family in ['gpt-neo', 'gpt2']:
         base_eval_dataloader = torch.utils.data.DataLoader(
             base_torch_format_dataset, batch_size=cfg.batch_size//4, collate_fn=custom_data_collator
         )
@@ -261,14 +265,19 @@ def run_generation(cfg, batch, model, tokenizer):
     input_ids = batch["input_ids"]
     input_strings = tokenizer.batch_decode(input_ids, skip_special_tokens=True)
     split_symbol = " [/INST]" if cfg.model_family == 'llama2-7b' else 'Answer: '
-    ground_truth, input_strings = [], []
+    context_len = 32
+    # print(len(input_strings))
+    ground_truth, input_string = [], []
     for s in input_strings:
-        split_string = s.split(split_symbol)
-        if len(split_string) == 1:
-            print(split_string)
-            continue
-        ground_truth.append(split_string[1])
-        input_strings.append(split_string[0])
+        # split_string = s.split(split_symbol)
+        # if len(split_string) == 1:
+        #     print(split_string)
+        #     continue
+        # print(split_string)
+        # ground_truth.append(split_string[1])
+        # input_string.append(split_string[0])
+        ground_truth.append(s[context_len:])
+        input_string.append(s[:context_len])
 
     # ground_truth = [s.split(split_symbol)[1] for s in input_strings]
     # input_strings = [s.split(split_symbol)[0] for s in input_strings]
@@ -276,7 +285,7 @@ def run_generation(cfg, batch, model, tokenizer):
     # input_strings = [s.split(split_symbol)[0] for s in input_strings]
     #add ["/INST "] to the end of each string
     if cfg.model_family == 'llama2-7b':
-        input_strings = [s + split_symbol for s in input_strings]
+        input_string = [s + split_symbol for s in input_strings]
         
     #we only want to retain the input before the [/INST] token. split each string to only retain the content before the [/INST] token
     # ground_truth = [s.split("[/INST] ")[1] for s in input_strings]
@@ -290,9 +299,10 @@ def run_generation(cfg, batch, model, tokenizer):
     left_pad_tokenizer.padding_size = 'longest'
     left_pad_tokenizer.pad_token = left_pad_tokenizer.eos_token
     left_pad_tokenizer.pad_token_id = left_pad_tokenizer.eos_token_id
-
-
-    inputs = left_pad_tokenizer.batch_encode_plus(input_strings, add_special_tokens=True, return_tensors='pt', padding=True).to(model.device)
+    
+    # print(len(input_strings))
+    
+    inputs = left_pad_tokenizer.batch_encode_plus(input_string, add_special_tokens=True, return_tensors='pt', padding=True).to(model.device)
     #now generate
     out = model.generate(inputs.input_ids, attention_mask=inputs.attention_mask, max_length=cfg.generation.max_length, max_new_tokens=cfg.generation.max_new_tokens, do_sample=False, use_cache=True, pad_token_id=left_pad_tokenizer.eos_token_id)
     strs = left_pad_tokenizer.batch_decode(out[:, inputs.input_ids.shape[-1]:], skip_special_tokens=True)

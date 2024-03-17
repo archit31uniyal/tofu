@@ -1,4 +1,4 @@
-from data_module import TextDatasetQA, custom_data_collator
+from data_module import TextDatasetQA, custom_data_collator, TextGenDataset
 from dataloader import CustomTrainer
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -59,7 +59,11 @@ def main(cfg):
     tokenizer.pad_token = tokenizer.eos_token
 
     max_length = 500
-    torch_format_dataset = TextDatasetQA(cfg.data_path, tokenizer=tokenizer, model_family = cfg.model_family, max_length=max_length, split=cfg.split)
+    if cfg.task == 'qa':
+        torch_format_dataset = TextDatasetQA(cfg.data_path, tokenizer=tokenizer, model_family = cfg.model_family, max_length=max_length, split=cfg.split)
+    else:
+        torch_format_dataset = TextGenDataset(cfg.data_path, tokenizer=tokenizer, model_family = cfg.model_family, max_length=max_length, split=cfg.split)
+        torch_eval_dataset = TextGenDataset(cfg.data_path, tokenizer=tokenizer, model_family = cfg.model_family, max_length=max_length, split='test')
 
     print("Size of dataset: ", len(torch_format_dataset))
     batch_size = cfg.batch_size
@@ -96,7 +100,7 @@ def main(cfg):
             save_only_model=True,
             ddp_find_unused_parameters= False,
             evaluation_strategy="no",
-            deepspeed='llm_privacy/tofu/config/ds_config.json',
+            deepspeed='/scratch/deu9yh/llm_privacy/tofu/config/ds_config.json',
             weight_decay = cfg.weight_decay
         )
 
@@ -115,14 +119,23 @@ def main(cfg):
     if cfg.LoRA.r != 0:
         model = get_peft_model(model, config)
     
-
-    trainer = CustomTrainer(
-        model=model,
-        train_dataset=torch_format_dataset,
-        eval_dataset=torch_format_dataset,
-        args=training_args,
-        data_collator=custom_data_collator,
-    )
+    if cfg.task == 'gen':
+        trainer = CustomTrainer(
+            model=model,
+            train_dataset=torch_format_dataset,
+            eval_dataset=torch_eval_dataset,
+            args=training_args,
+            data_collator=custom_data_collator,
+        )
+    else:
+        trainer = CustomTrainer(
+            model=model,
+            train_dataset=torch_format_dataset,
+            eval_dataset=torch_format_dataset,
+            args=training_args,
+            data_collator=custom_data_collator,
+        )
+        
     model.config.use_cache = False  # silence the warnings. Please re-enable for inference!
     trainer.train()
 

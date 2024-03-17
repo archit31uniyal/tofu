@@ -23,7 +23,7 @@ class CustomTrainer(Trainer):
     def compute_loss(self, model, inputs, return_outputs=False):
         input_ids, labels, attention_mask = inputs
         # forward pass
-        outputs = model(input_ids,labels=labels, attention_mask=attention_mask)
+        outputs = model(input_ids, labels=labels, attention_mask=attention_mask)
         # logits = outputs.get("logits")
         loss = outputs.loss
         # # compute custom loss (suppose one has 3 labels with different weights)
@@ -270,19 +270,20 @@ class CustomTrainerForgetting(Trainer):
         with torch.no_grad():
             for i, (folder, split, question_key, answer_key, eval_task, base_answer_key, perturbed_answer_key) in enumerate(zip(eval_cfg.data_path, eval_cfg.split_list, eval_cfg.question_key, eval_cfg.answer_key, eval_cfg.eval_task, eval_cfg.base_answer_key, eval_cfg.perturbed_answer_key)):
                 world_size = self.accelerator.num_processes
-
+                break
                 # For some reason, Hydra is not interprating the split correctly
                 if eval_task == 'eval_log_forget':
                     split = eval_cfg.split
-                print(f'Working on eval task {eval_task} with split {split}')
+                print(f'Working on eval task {eval_task} with split {split} on folder {folder}')
                 save_filename = os.path.join(curr_save_dir, f"{eval_task}.json")
                 save_filename = save_filename if world_size == 1 else os.path.join(curr_save_dir, f"{eval_task}_{self.accelerator.local_process_index}.json")
                 # print(save_filename)
                 if os.path.exists(save_filename) and not eval_cfg.overwrite:
                     print(f"Skipping {eval_task} because {save_filename} already exists")
                     continue
+                
 
-                eval_dataloader, base_eval_dataloader, perturb_dataloader = get_dataloader(eval_cfg, eval_task, self.tokenizer, folder, split, question_key, answer_key, base_answer_key, perturbed_answer_key)
+                eval_dataloader, base_eval_dataloader, perturb_dataloader = get_dataloader(eval_cfg, eval_task, self.tokenizer, folder, split, question_key, answer_key, base_answer_key, perturbed_answer_key, task= 'gen')
                 eval_dataloader = self.accelerator.prepare(eval_dataloader)
                 # print('dataset condition: ', len(eval_dataloader.dataset), self.accelerator.local_process_index)
                 base_eval_dataloader = self.accelerator.prepare(base_eval_dataloader)
@@ -297,6 +298,7 @@ class CustomTrainerForgetting(Trainer):
             self.accelerator.wait_for_everyone()
             aggregated_eval_logs = {}
             for eval_task in eval_cfg.eval_task:
+                break
                 #read the saved file as json and merge them using merge_dicts
                 if world_size > 1:
                     if self.accelerator.is_local_main_process:
@@ -318,7 +320,7 @@ class CustomTrainerForgetting(Trainer):
                                 filename = os.path.join(curr_save_dir, f"{eval_task}_{i}.json")
                                 os.remove(filename)
             
-            if not eval_cfg.model_family == "gpt-neo":                  
+            if not eval_cfg.model_family in ['gpt-neo', 'gpt2']:                  
                 if self.accelerator.is_local_main_process:
                     aggregated_eval_logs = interleave_eval_result_dict(aggregated_eval_logs, forget_rate, large_bsz=eval_cfg.batch_size, num_processes=world_size)
                     aggregated_eval_log_filename = os.path.join(curr_save_dir, "eval_log_aggregated.json")

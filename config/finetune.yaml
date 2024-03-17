@@ -1,15 +1,16 @@
-model_family: llama2-7b
+model_family: gpt2
 
 LoRA:
   r: 0
   alpha: 32
   dropout: 0.05
 
-data_path: /p/compressionleakage/llm_privacy/tofu/dataset
-split: full
+data_path: "imdbhface"
+split: train
+task: gen
 batch_size: 4
 gradient_accumulation_steps: 1
-num_epochs: 5
+num_epochs: 10
 lr: 1e-5
-save_dir: paper_models/final_ft_noLORA_5_epochs_inst_lr${lr}_${model_family}_${split}
+save_dir: paper_models/final_ft_noLORA_5_epochs_inst_lr${lr}_${model_family}_${split}_${task}_${data_path}
 weight_decay: 0.01

@@ -38,4 +38,13 @@ gpt-neo:
   flash_attention2: "false"
   gradient_checkpointing: "false"
   forgot_model_path: "paper_models/4GPU_grad_diff_1e-05_forget_new/checkpoint-93"
+gpt2:
+  hf_key: "gpt2"
+  question_start_tag: "Prompt: "
+  question_end_tag: "\n"
+  answer_tag: "Answer: "
+  flash_attention2: "false"
+  gradient_checkpointing: "false"
+  forgot_model_path: "/scratch/deu9yh/llm_privacy/paper_models/4GPU_grad_diff_1e-06_train_gpt2_unlearn_imdbhface_bf16/checkpoint-234"
+
   

@@ -15,5 +15,5 @@ packaging
 bitsandbytes
 scipy
 ninja
-flash-attn --no-build-isolation
+flash-attn
 

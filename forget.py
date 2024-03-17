@@ -1,4 +1,4 @@
-from data_module import TextForgetDatasetQA, TextForgetDatasetDPOQA, TextGenerationDatasetFromJSON
+from data_module import TextForgetDatasetQA, TextForgetDatasetDPOQA, TextGenerationDatasetFromJSON, TextGenerationDataset
 from dataloader import CustomTrainerForgetting, custom_data_collator_forget
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -69,18 +69,20 @@ def main(cfg):
     if cfg.forget_loss == "dpo":
         torch_format_dataset = TextForgetDatasetDPOQA(cfg.data_path, tokenizer=tokenizer, model_family = cfg.model_family, max_length=max_length, split=cfg.split)
     else:
-        if not cfg.model_family == "gpt-neo":
+        if not cfg.model_family in ['gpt-neo', 'gpt2']:
             torch_format_dataset = TextForgetDatasetQA(cfg.data_path, tokenizer=tokenizer, model_family = cfg.model_family, max_length=max_length, split=cfg.split, loss_type=cfg.forget_loss)
-        else:
+        elif cfg.task == 'qa':
+            print(cfg.split)
             torch_format_dataset = TextGenerationDatasetFromJSON(cfg.data_path, tokenizer=tokenizer, model_family = cfg.model_family, max_length=max_length, split=cfg.split, loss_type=cfg.forget_loss)
+        else:
+            torch_format_dataset = TextGenerationDataset(cfg.data_path, tokenizer=tokenizer, model_family = cfg.model_family, max_length=max_length, split=cfg.split, loss_type=cfg.forget_loss)
     
     batch_size = cfg.batch_size
     gradient_accumulation_steps = cfg.gradient_accumulation_steps
     steps_per_epoch = len(torch_format_dataset)//(batch_size*gradient_accumulation_steps*num_devices)
-
     max_steps = int(cfg.num_epochs*len(torch_format_dataset))//(batch_size*gradient_accumulation_steps*num_devices)
-    print(f"max_steps: {max_steps}")
-
+    print(f"max_steps: {max_steps} \t length of forget dataset: {len(torch_format_dataset)} \t learning_rate: {cfg.lr}")
+    # exit(0)
     training_args = transformers.TrainingArguments(
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
@@ -88,8 +90,8 @@ def main(cfg):
             warmup_steps=max(1, max_steps//10),
             max_steps=max_steps,
             learning_rate=cfg.lr,
-            fp16=True,
-            fp16_full_eval=True,
+            bf16=True,
+            bf16_full_eval=True,
             logging_steps=max(1,max_steps//20),
             logging_dir=f'{cfg.save_dir}/logs',
             output_dir=cfg.save_dir,
